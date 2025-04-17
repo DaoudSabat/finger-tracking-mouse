@@ -2,106 +2,108 @@ import cv2
 import mediapipe as mp
 import pyautogui
 import time
+import math
 
-# Initialize Mediapipe hand model
+# Initialize Mediapipe hand tracking
 mp_hands = mp.solutions.hands
-hands = mp_hands.Hands()
 mp_draw = mp.solutions.drawing_utils
+hands = mp_hands.Hands(
+    static_image_mode=False,
+    max_num_hands=1,
+    min_detection_confidence=0.7,
+    min_tracking_confidence=0.7
+)
 
-# Capture video from the laptop camera
-cap = cv2.VideoCapture(0)
-
-# Screen width and height for extended mode
+# Screen dimensions
 screen_width, screen_height = pyautogui.size()
-total_screen_width = screen_width * 2  # Assuming two screens with the same resolution
 
-# Variables to track mouse state
+# Video capture
+cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+cap.set(cv2.CAP_PROP_FPS, 30)
+
+if not cap.isOpened():
+    raise IOError("Cannot open webcam")
+
+# Track mouse state
 mouse_pressed = False
-right_click_pressed = False
 pinch_start_time = 0
-dragging = False
+hold_threshold = 0.6
+move_threshold = 5
+right_click_done = False
 
-# Time threshold to distinguish between click and hold (in seconds)
-hold_threshold = 0.5
+last_mouse_x, last_mouse_y = 0, 0
+pinch_stable_counter = 0
+PINCH_STABLE_FRAMES = 3
+
+
+def get_screen_coords(landmark):
+    return int(landmark.x * screen_width), int(landmark.y * screen_height)
+
+def calculate_distance(p1, p2):
+    return math.hypot(p1.x - p2.x, p1.y - p2.y)
 
 while True:
-    # Read a frame from the camera
     ret, frame = cap.read()
     if not ret:
         break
-    
-    # Flip the frame horizontally for a mirror effect
+
     frame = cv2.flip(frame, 1)
-    
-    # Convert the frame to RGB
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    
-    # Process the frame with Mediapipe
-    result = hands.process(rgb_frame)
-    
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    result = hands.process(rgb)
+
     if result.multi_hand_landmarks:
-        for hand_landmarks in result.multi_hand_landmarks:
-            mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-            
-            # Get the position of the index finger (landmark 8)
-            index_finger_tip = hand_landmarks.landmark[8]
-            
-            # Convert to screen coordinates
-            finger_x = int(index_finger_tip.x * total_screen_width)
-            finger_y = int(index_finger_tip.y * screen_height)
-            
-            # Move the mouse cursor
-            pyautogui.moveTo(finger_x, finger_y)
-            
-            # Simulate a mouse click hold and release based on finger distance
-            thumb_tip = hand_landmarks.landmark[4]
-            distance = ((index_finger_tip.x - thumb_tip.x) ** 2 + (index_finger_tip.y - thumb_tip.y) ** 2) ** 0.5
-            
-            if distance < 0.07:
+        hand_landmarks = result.multi_hand_landmarks[0]
+        mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+        index_tip = hand_landmarks.landmark[8]
+        thumb_tip = hand_landmarks.landmark[4]
+        middle_tip = hand_landmarks.landmark[12]
+
+        dist_index_thumb = calculate_distance(index_tip, thumb_tip)
+        dist_index_middle = calculate_distance(index_tip, middle_tip)
+
+        mouse_x, mouse_y = get_screen_coords(index_tip)
+
+        if abs(mouse_x - last_mouse_x) > move_threshold or abs(mouse_y - last_mouse_y) > move_threshold:
+            pyautogui.moveTo(mouse_x, mouse_y)
+            last_mouse_x, last_mouse_y = mouse_x, mouse_y
+
+        if dist_index_thumb < 0.06:
+            pinch_stable_counter += 1
+            if pinch_stable_counter >= PINCH_STABLE_FRAMES:
                 if not mouse_pressed:
                     pinch_start_time = time.time()
                     mouse_pressed = True
                     pyautogui.mouseDown()
-            else:
-                if mouse_pressed:
-                    pinch_duration = time.time() - pinch_start_time
-                    if pinch_duration < hold_threshold:
-                        pyautogui.mouseUp()
-                        pyautogui.click()
-                    else:
-                        pyautogui.mouseUp()
-                    mouse_pressed = False
-            
-            # Get the position of the middle finger (landmark 12)
-            middle_finger_tip = hand_landmarks.landmark[12]
-            
-            # Calculate the distance between the middle finger and thumb
-            right_click_distance = ((middle_finger_tip.x - thumb_tip.x) ** 2 + (middle_finger_tip.y - thumb_tip.y) ** 2) ** 0.5
-            
-            # Simulate a right click based on the distance
-            if right_click_distance < 0.07:
-                if not right_click_pressed:
-                    pyautogui.rightClick()
-                    right_click_pressed = True
-            else:
-                right_click_pressed = False
-            
-            # Handle scrolling with ring finger (landmark 16)
-            ring_finger_tip = hand_landmarks.landmark[16]
-            scroll_distance = ((ring_finger_tip.x - thumb_tip.x) ** 2 + (ring_finger_tip.y - thumb_tip.y) ** 2) ** 0.5
-            
-            if scroll_distance < 0.07:
-                pyautogui.scroll(-1)
-            else:
-                pyautogui.scroll(1)
-    
-    # Display the frame
+        else:
+            pinch_stable_counter = 0
+            if mouse_pressed:
+                duration = time.time() - pinch_start_time
+                pyautogui.mouseUp()
+                if duration < hold_threshold:
+                    pyautogui.click()
+                mouse_pressed = False
+
+        # Right click detection using index and middle finger pinch
+        if dist_index_middle < 0.05:
+            if not right_click_done:
+                pyautogui.rightClick()
+                right_click_done = True
+        else:
+            right_click_done = False
+
+    else:
+        pinch_stable_counter = 0
+        if mouse_pressed:
+            pyautogui.mouseUp()
+            mouse_pressed = False
+        right_click_done = False
+
     cv2.imshow('Finger Tracking', frame)
-    
-    # Break the loop when 'e' is pressed
     if cv2.waitKey(1) & 0xFF == ord('e'):
         break
 
-# Release the video capture object and close OpenCV windows
 cap.release()
 cv2.destroyAllWindows()

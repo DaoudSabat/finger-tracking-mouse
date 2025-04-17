@@ -11,6 +11,9 @@ mp_draw = mp.solutions.drawing_utils
 # Capture video from the laptop camera
 cap = cv2.VideoCapture(0)
 
+# Set high resolution (Full HD)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 # Screen width and height
 screen_width, screen_height = pyautogui.size()
 
@@ -19,7 +22,7 @@ mouse_pressed = False
 pinch_start_time = 0
 
 # Time threshold to distinguish between click and hold (in seconds)
-hold_threshold = 0.5
+hold_threshold = 0.59
 
 while True:
     # Read a frame from the camera
@@ -54,7 +57,7 @@ while True:
             thumb_tip = hand_landmarks.landmark[4]
             distance = ((index_finger_tip.x - thumb_tip.x) ** 2 + (index_finger_tip.y - thumb_tip.y) ** 2) ** 0.5
             
-            if distance < 0.07:
+            if distance < 0.1:
                 if not mouse_pressed:
                     pinch_start_time = time.time()
                     mouse_pressed = True
